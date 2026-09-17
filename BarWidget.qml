@@ -145,9 +145,9 @@ WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // md-sunglasses (U+F04E0): a pair of shades, matching the tint metaphor.
+    // fa-chalkboard_user (U+EDE6): a figure before a chalkboard, the app logo.
     // Solid and filled, so it reads at bar size; it is the whole artwork.
-    text: "󰓠"
+    text: ""
     foreground: root.tintOn ? root.tintColor : root.tintColorDim
     tooltipText: Model.tooltip(root.tintOn, root.intensity, root.colorId)
 
@@ -208,8 +208,8 @@ WidgetButton {
           id: iconGlyph
           anchors.left: parent.left
           anchors.verticalCenter: parent.verticalCenter
-          // Same sunglasses glyph, held in the selected preset's colour.
-          text: "󰓠"
+          // Same chalkboard-user glyph, held in the selected preset's colour.
+          text: ""
           font.family: Style.font.family
           font.pixelSize: Style.font.body
           color: root.tintOn ? root.tintColor : root.tintColorDim

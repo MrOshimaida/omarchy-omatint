@@ -3,7 +3,7 @@
 ![Omatint](preview.png)
 
 An [Omarchy](https://omarchy.org) plugin that tints your screen, just like a pair of
-tinted "computer glasses". A pair of sunglasses lives in your bar: **left-click** to flip the tint
+tinted "computer glasses". A chalkboard-user glyph lives in your bar: **left-click** to flip the tint
 on and off, **right-click** for colour swatches, a strength slider and two switches. When it is
 on, the whole screen is bathed in translucent glass — gentler contrast for long sessions, and it
 never gets in the way: the tint is click-through and takes no keyboard focus, so the desktop
@@ -18,7 +18,7 @@ underneath keeps working exactly as if it were not there.
 omarchy plugin add https://github.com/MrOshimaida/omarchy-omatint.git --enable
 ```
 
-A pair of sunglasses (󰓠) appears in the bar, painted in the colour you picked — dimmed while the tint is off, full strength while it is live. A status bead sits under it: grey when off, the preset colour when live. Move it around with `omarchy bar move` if you like.
+A chalkboard-user glyph () appears in the bar, painted in the colour you picked — dimmed while the tint is off, full strength while it is live. A status bead sits under it: grey when off, the preset colour when live. Move it around with `omarchy bar move` if you like.
 
 ## Use
 
