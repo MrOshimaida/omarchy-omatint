@@ -28,6 +28,12 @@ BarWidget {
   // that case the button silently does nothing rather than spew errors.
   readonly property var pluginShell: root.bar && root.bar.shell ? root.bar.shell : null
 
+  // The lock service, if the stock shell provides it. The reminder pauses while
+  // the session is locked so it counts desk time, not calendar time -- a night
+  // of lock + suspend must not make the notification fire on next login.
+  readonly property var lockService: root.pluginShell && typeof root.pluginShell.firstPartyServiceFor === "function"
+    ? root.pluginShell.firstPartyServiceFor("omarchy.lock") : null
+
   function refreshState() {
     if (root.pluginShell && typeof root.pluginShell.isPluginOpen === "function")
       root.tintOn = root.pluginShell.isPluginOpen(root.moduleName) === true
@@ -120,13 +126,15 @@ BarWidget {
     onTriggered: root.refreshState()
   }
 
-  // Eye-rest reminder: runs only while the tint is on, and restarts whenever it
-  // is toggled, so it counts continuous tint time rather than wall-clock time.
+  // Eye-rest reminder: runs only while the tint is on and the session is
+  // unlocked, and restarts whenever the tint is toggled, so it counts actual
+  // desk time rather than wall-clock time -- a locked or suspended screen
+  // does not age the "eyes have been working" clock.
   Timer {
     id: restTimer
     interval: root.remindMinutes * 60000
     repeat: true
-    running: root.tintOn && root.remindRest
+    running: root.tintOn && root.remindRest && !(root.lockService && root.lockService.locked)
     onTriggered: notifyRest.running = true
   }
 
