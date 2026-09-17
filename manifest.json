@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "id": "xero.omatint",
+  "name": "Omatint",
+  "version": "1.0.0",
+  "author": "Mister.Oshimaida",
+  "license": "MIT",
+  "description": "Tint the whole screen in a comfortable translucent colour — green, amber, yellow or red. A click-through overlay that never blocks the desktop, with an on/off bar button, colour swatches and a live strength slider.",
+  "kinds": [
+    "overlay",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Omatint.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Omatint",
+    "description": "Click: toggle the tint. Right-click: colour, strength and settings",
+    "category": "Health",
+    "aliases": [
+      "omatint",
+      "green",
+      "tint",
+      "filter",
+      "colour",
+      "color",
+      "screen",
+      "eyes",
+      "comfort"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "intensity": 35,
+      "color": "green",
+      "useNightKey": false,
+      "remind": false,
+      "remindMinutes": 45
+    },
+    "schema": [
+      {
+        "key": "intensity",
+        "type": "integer",
+        "label": "Tint strength (%)",
+        "min": 5,
+        "max": 100,
+        "step": 5,
+        "defaultValue": 35,
+        "description": "How strong the tint is when it is switched on. Right-click the bar button to change it live."
+      },
+      {
+        "key": "color",
+        "type": "enum",
+        "label": "Tint colour",
+        "options": ["green", "amber", "yellow", "red"],
+        "defaultValue": "green",
+        "description": "green: least irritating tint (green light is the least photophobic) — a daytime comfort wash, not a night filter. amber: warm night filter (best evidence for cutting the melatonin-suppressing 460-500 nm band). yellow: daytime contrast/glare tint. red: strongest night mode, preserves melatonin and night vision."
+      },
+      {
+        "key": "useNightKey",
+        "type": "boolean",
+        "label": "Use the night-light key",
+        "defaultValue": false,
+        "description": "When on, Super+Ctrl+N toggles this tint instead of the stock night light."
+      },
+      {
+        "key": "remind",
+        "type": "boolean",
+        "label": "Eye-rest reminder",
+        "defaultValue": false,
+        "description": "Send a notification after the tint has been on for the interval below."
+      },
+      {
+        "key": "remindMinutes",
+        "type": "integer",
+        "label": "Reminder interval (minutes)",
+        "min": 5,
+        "max": 240,
+        "step": 5,
+        "defaultValue": 45,
+        "description": "Minutes of continuous tint time before the eye-rest notification fires."
+      }
+    ]
+  }
+}
