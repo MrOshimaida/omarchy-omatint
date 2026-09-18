@@ -75,7 +75,16 @@ which is why this plugin also ships a break reminder.
   temperature via `hyprsunset`; this is the simple, honest version.
 - **The night-light key** is `Super + Ctrl + N`. The switch only changes what that key does at
   runtime by writing `useNightKey` into the bar entry; the stock night light is untouched when it
-  is off. The wrapper reads that setting from `shell.json` via `~/.local/bin/omatint-nightkey`.
+  is off.
+- **Wiring the night-light key.** Stock Omarchy binds `Super + Ctrl + N` to the night light, so
+  the plugin does not rebind it silently. Run once after installing to point that key at the
+  wrapper (which reads `useNightKey` from `shell.json`):
+  ```sh
+  bash "$HOME/.config/omarchy/plugins/xero.omatint/bin/omatint-nightkey-install"
+  ```
+  Use `…/omatint-nightkey-install status` to check, and `…/omatint-nightkey-install remove` to
+  restore the stock night-light binding. The install is idempotent: rerunning it just refreshes
+  the managed block in `~/.config/hypr/bindings.lua`.
 
 ## Files
 
@@ -84,4 +93,6 @@ which is why this plugin also ships a break reminder.
 | `Omatint.qml`       | The full-screen, click-through tint layer           |
 | `BarWidget.qml`     | The bar button + colour/strength/settings popup     |
 | `OmatintModel.js`   | Pure logic (clamp, alpha, presets, payload); tested |
+| `bin/omatint-nightkey` | Key wrapper: toggles the tint when `useNightKey` is on, else the stock night light |
+| `bin/omatint-nightkey-install` | Idempotent installer/remover for the wrapper + `Super + Ctrl + N` binding |
 | `test/model-test.js`| `node test/model-test.js`                           |

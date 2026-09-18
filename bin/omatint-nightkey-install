@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Wire Omatint's "use the night-light key" option into this machine.
+#
+# The plugin folder cannot touch ~/.local/bin or ~/.config/hypr by itself, so
+# this does the two install steps a fresh machine needs:
+#   1. Install the omatint-nightkey wrapper into ~/.local/bin.
+#   2. Point SUPER + CTRL + N at it (unbinding the stock night-light toggle),
+#      between marker comments in ~/.config/hypr/bindings.lua.
+#
+# Both steps are idempotent and reversible:
+#   install            install (or repair) the wiring
+#   install remove     take it out again, restoring the stock night light
+#   install status     report what is and is not wired up
+#
+set -euo pipefail
+
+PLUGIN="xero.omatint"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WRAPPER_SRC="${SCRIPT_DIR}/omatint-nightkey"
+
+HOME_BIN="${HOME}/.local/bin"
+WRAPPER_DEST="${HOME_BIN}/omatint-nightkey"
+BINDINGS="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
+
+BEGIN="-- >>> omatint-nightkey (managed by $(basename "${BASH_SOURCE[0]}")) >>>"
+END="-- <<< omatint-nightkey <<<"
+
+UE="SUPER + CTRL + N"
+DESCRIPTION="Toggle nightlight or Omatint"
+
+block() {
+  printf '%s\n' "${BEGIN}"
+  printf '%s\n' '-- SUPER+CTRL+N respects the Omatint use-night-light-key option:'
+  printf '%s\n' '-- on, it toggles the tint; off, it runs the stock night light.'
+  printf '%s\n' "hl.unbind(\"${UE}\")"
+  printf '%s\n' "o.bind(\"${UE}\", \"${DESCRIPTION}\", \"${WRAPPER_DEST}\")"
+  printf '%s\n' "${END}"
+}
+
+install_wrapper() {
+  mkdir -p "${HOME_BIN}"
+  install -m 0755 "${WRAPPER_SRC}" "${WRAPPER_DEST}"
+  echo "Installed ${WRAPPER_DEST}"
+}
+
+install_binding() {
+  [[ -f "${BINDINGS}" ]] || { echo "No ${BINDINGS} found; cannot wire the key" >&2; return 1; }
+  if grep -qF -- "${END}" "${BINDINGS}"; then
+    # Replace the managed block in place.
+    awk -v begin="${BEGIN}" -v end="${END}" '
+      $0 == begin { in_block = 1; next }
+      $0 == end   { in_block = 0; next }
+      !in_block   { print }
+    ' "${BINDINGS}" > "${BINDINGS}.omatint.$$"
+    printf '%s\n' "$(block)" >> "${BINDINGS}.omatint.$$"
+    mv "${BINDINGS}.omatint.$$" "${BINDINGS}"
+    echo "Refreshed the night-light key block in ${BINDINGS}"
+  else
+    printf '\n%s\n' "$(block)" >> "${BINDINGS}"
+    echo "Wired ${UE} to ${WRAPPER_DEST} in ${BINDINGS}"
+  fi
+}
+
+remove_binding() {
+  [[ -f "${BINDINGS}" ]] || return 0
+  if grep -qF -- "${END}" "${BINDINGS}"; then
+    awk -v begin="${BEGIN}" -v end="${END}" '
+      $0 == begin { in_block = 1; next }
+      $0 == end   { in_block = 0; next }
+      !in_block   { print }
+    ' "${BINDINGS}" > "${BINDINGS}.omatint.$$"
+    mv "${BINDINGS}.omatint.$$" "${BINDINGS}"
+    echo "Removed the night-light key block from ${BINDINGS}"
+  else
+    echo "No managed night-light key block found in ${BINDINGS}"
+  fi
+}
+
+reload_hypr() {
+  if command -v hyprctl >/dev/null 2>&1; then
+    hyprctl reload >/dev/null 2>&1 || true
+    if hyprctl configerrors 2>/dev/null | grep -q .; then
+      echo "Hyprland reported config warnings after reload (check hyprctl configerrors)." >&2
+    fi
+  fi
+}
+
+status_report() {
+  local wrapper_ok=no binding_ok=no
+  [[ -x "${WRAPPER_DEST}" ]] && wrapper_ok=yes
+  if [[ -f "${BINDINGS}" ]] && grep -qF -- "-- >>> omatint-nightkey" "${BINDINGS}"; then
+    binding_ok=yes
+  fi
+  echo "wrapper (${WRAPPER_DEST}): ${wrapper_ok}"
+  echo "keybinding SUPER+CTRL+N (${BINDINGS}): ${binding_ok}"
+  [[ "${wrapper_ok}" == yes && "${binding_ok}" == yes ]] || return 1
+}
+
+case "${1:-install}" in
+  install)
+    install_wrapper
+    install_binding
+    reload_hypr
+    status_report
+    ;;
+  remove)
+    remove_binding
+    rm -f "${WRAPPER_DEST}"
+    echo "Removed ${WRAPPER_DEST}"
+    reload_hypr
+    ;;
+  status)
+    status_report
+    ;;
+  *)
+    exit 2
+    ;;
+esac

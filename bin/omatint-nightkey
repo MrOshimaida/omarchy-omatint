@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# SUPER + CTRL + N for Omatint.
+#
+# When the plugin's "use the night-light key" option is on, this toggles the
+# xero.omatint overlay; otherwise it falls through to the stock Omarchy
+# night light. The option lives in the bar entry inside shell.json, so the
+# checkbox can flip the behaviour without reloading Hyprland.
+set -euo pipefail
+
+PLUGIN="xero.omatint"
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+
+if ! command -v jq >/dev/null 2>&1; then
+  exec omarchy-toggle-nightlight
+fi
+
+entry="{}"
+if [[ -r "${CONFIG}" ]]; then
+  entry="$(jq -c --arg id "${PLUGIN}" \
+    '[.bar.layout[][]? | select(.id == $id)][0] // {}' \
+    "${CONFIG}" 2>/dev/null || echo '{}')"
+fi
+
+if [[ "$(jq -r '.useNightKey // false' <<<"${entry}")" == "true" ]]; then
+  intensity="$(jq -r '.intensity // 35' <<<"${entry}")"
+  color="$(jq -r '.color // "green"' <<<"${entry}")"
+  exec omarchy-shell -q shell toggle "${PLUGIN}" \
+    "{\"intensity\":${intensity:-35},\"color\":\"${color:-green}\"}"
+fi
+
+exec omarchy-toggle-nightlight
