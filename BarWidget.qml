@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "OmatintModel.js" as Model
@@ -34,9 +35,45 @@ BarWidget {
   readonly property var lockService: root.pluginShell && typeof root.pluginShell.firstPartyServiceFor === "function"
     ? root.pluginShell.firstPartyServiceFor("omarchy.lock") : null
 
+  // The idle service is the shell's own screensaver/lock pacer, so it is live
+  // even when the lock plugin is disabled (as it is by default in some set-ups).
+  // It reports the session as idle once the screensaver threshold is crossed,
+  // which is exactly when the screen stops being looked at -- pause on it so
+  // the eye-rest clock counts active desktop time, not wall-clock time.
+  readonly property var idleService: root.pluginShell && typeof root.pluginShell.firstPartyServiceFor === "function"
+    ? root.pluginShell.firstPartyServiceFor("omarchy.idle") : null
+
+  // Standalone eyes-on-screen detector: Omarchy's own IdleMonitor, owned by
+  // this widget rather than the shell's pacer, so it works even when the shell
+  // idle cycle is disabled (stay-awake state-file, lock plugin off, etc.).
+  // After this many seconds of real inactivity the display stops being watched
+  // and the eye-rest clock freezes until the user is back at the desk.
+  readonly property int remindPauseIdleSeconds: 120
+  property bool idleForPause: false
+  IdleMonitor {
+    id: eyeRestIdle
+    enabled: root.remindRest
+    timeout: root.remindPauseIdleSeconds
+    respectInhibitors: true
+    onIsIdleChanged: root.idleForPause = eyeRestIdle.isIdle
+  }
+  readonly property bool sessionIdle:
+    root.idleForPause
+    || (root.idleService && root.idleService.idledThisCycle === true)
+    || (root.lockService && root.lockService.locked === true)
+
   function refreshState() {
-    if (root.pluginShell && typeof root.pluginShell.isPluginOpen === "function")
-      root.tintOn = root.pluginShell.isPluginOpen(root.moduleName) === true
+    if (root.pluginShell && typeof root.pluginShell.isPluginOpen === "function") {
+      var on = root.pluginShell.isPluginOpen(root.moduleName) === true
+      if (root.tintOn !== on) {
+        root.tintOn = on
+        // Outside the boot window a drift means the overlay changed under us
+        // (external hide/summon), so the persisted flag must follow. During
+        // boot the first refreshState() runs before the restore re-summons,
+        // so a false write there would erase the intent we are about to keep.
+        if (root._bootSettled) root.persistSettings()
+      }
+    }
   }
 
   function payload() {
@@ -44,12 +81,14 @@ BarWidget {
   }
 
   // Optimistic flip: reflect the click immediately, let refreshState() correct
-  // any drift (the overlay disappearing for a reason we cannot see).
+  // any drift (the overlay disappearing for a reason we cannot see). The flag
+  // is persisted so a shell restart can bring the tint back as it was.
   function setEnabled(on) {
     if (!root.pluginShell) return
     if (on) root.pluginShell.summon(root.moduleName, root.payload())
     else if (typeof root.pluginShell.hide === "function") root.pluginShell.hide(root.moduleName)
     root.tintOn = on
+    root.persistSettings()
   }
 
   // The slider re-fitting the live layer calls this while it is dragged.
@@ -88,7 +127,8 @@ BarWidget {
       color: root.colorId,
       useNightKey: root.useNightKey,
       remind: root.remindRest,
-      remindMinutes: root.remindMinutes
+      remindMinutes: root.remindMinutes,
+      tintOn: root.tintOn
     })
   }
 
@@ -127,14 +167,14 @@ BarWidget {
   }
 
   // Eye-rest reminder: runs only while the tint is on and the session is
-  // unlocked, and restarts whenever the tint is toggled, so it counts actual
-  // desk time rather than wall-clock time -- a locked or suspended screen
-  // does not age the "eyes have been working" clock.
+  // actually in use, and restarts whenever the tint is toggled, so it counts
+  // real desk time rather than wall-clock time -- an idle, locked, or
+  // screen-sleeping machine does not age the "eyes have been working" clock.
   Timer {
     id: restTimer
     interval: root.remindMinutes * 60000
     repeat: true
-    running: root.tintOn && root.remindRest && !(root.lockService && root.lockService.locked)
+    running: root.tintOn && root.remindRest && !root.sessionIdle
     onTriggered: notifyRest.running = true
   }
 
@@ -147,7 +187,43 @@ BarWidget {
     ]
   }
 
-  Component.onCompleted: root.refreshState()
+  // Bring the tint back up across a shell restart if it was on. The overlay
+  // panel is keepLoaded, so summon() queues until its loader is ready even
+  // when the bar connects before the panel.
+  //
+  // The host injects bar/shell/settings onto the widget AFTER construction, so
+  // the boot path cannot fire from Component.onCompleted alone: it retries
+  // until the bar shell and settings are actually in place, then refreshes the
+  // optimistic flag, restores, and finally lets drift-persistence engage.
+  property bool _mounted: false
+  property bool _bootSettled: false
+  property int _bootRetries: 0
+
+  function restoreIfWasOn() {
+    if (setting("tintOn", false) !== true) return
+    if (!root.pluginShell || typeof root.pluginShell.summon !== "function") return
+    root.pluginShell.summon(root.moduleName, root.payload())
+  }
+
+  function maybeBoot() {
+    if (root._mounted) return
+    if (!root.moduleName || !root.bar || !root.bar.shell || !root.settings) {
+      if (root._bootRetries++ < 30) Qt.callLater(root.maybeBoot)
+      return
+    }
+    root._mounted = true
+    Qt.callLater(root.onWidgetReady)
+  }
+
+  function onWidgetReady() {
+    root.refreshState()
+    root.restoreIfWasOn()
+    Qt.callLater(function () { root._bootSettled = true })
+  }
+
+  onBarChanged: root.maybeBoot()
+  onSettingsChanged: root.maybeBoot()
+  Component.onCompleted: root.maybeBoot()
 
 WidgetButton {
     id: button

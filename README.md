@@ -27,7 +27,7 @@ A chalkboard-user glyph () appears in the bar, painted in the colour you pick
   - **Colour swatches** — Green, Amber, Yellow or Red (see below).
   - **Strength slider** — 5–100%, re-paints the screen live; the value is remembered.
   - **Use the night-light key** — route `Super + Ctrl + N` to this tint instead of the stock night light.
-  - **Remind me to rest** — a notification every 45 minutes of continuous tint time.
+  - **Remind me to rest** — a notification every 45 minutes of active tint time; the clock pauses when you step away (idle over two minutes), lock, or the screen sleeps, so an unlocked-away stretch does not count as desk time.
 - **`Super + Ctrl + N`** — toggles the tint (when the night-light-key switch is on), otherwise the
   normal Omarchy night light.
 
@@ -76,6 +76,9 @@ which is why this plugin also ships a break reminder.
 - **The night-light key** is `Super + Ctrl + N`. The switch only changes what that key does at
   runtime by writing `useNightKey` into the bar entry; the stock night light is untouched when it
   is off.
+- **State survives shell restarts.** Whether the tint is on or off is written into the bar
+  entry, so `omarchy restart shell` brings the screen back exactly as you left it. The break
+  reminder clock restarts fresh, though — it starts counting from the new boot.
 - **Wiring the night-light key.** Stock Omarchy binds `Super + Ctrl + N` to the night light, so
   the plugin does not rebind it silently. Run once after installing to point that key at the
   wrapper (which reads `useNightKey` from `shell.json`):
