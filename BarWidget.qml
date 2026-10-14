@@ -71,9 +71,28 @@ BarWidget {
         // (external hide/summon), so the persisted flag must follow. During
         // boot the first refreshState() runs before the restore re-summons,
         // so a false write there would erase the intent we are about to keep.
-        if (root._bootSettled) root.persistSettings()
+        if (root._bootSettled) root.persistTintOnly()
       }
     }
+  }
+
+  // Drift correction follows an external hide/summon, so it must align ONLY
+  // the on/off flag in the live entry -- never re-write the whole entry. A
+  // full write here could clobber other fields (colour, strength, reminder)
+  // with a stale snapshot, because the base hands widgets a settings snapshot
+  // taken at instantiation rather than a live reference. Mutating the live
+  // config leaves every other key exactly as it currently sits in shell.json.
+  function persistTintOnly() {
+    if (!root.pluginShell || typeof root.pluginShell.mutateShellConfig !== "function") return
+    root.pluginShell.mutateShellConfig(function (cfg) {
+      var layout = cfg && cfg.bar && cfg.bar.layout ? cfg.bar.layout : null
+      var sections = ["left", "center", "right"]
+      for (var s = 0; layout && s < sections.length; s++) {
+        var arr = layout[sections[s]] || []
+        for (var i = 0; i < arr.length; i++)
+          if (arr[i] && arr[i].id === root.moduleName) arr[i].tintOn = root.tintOn
+      }
+    })
   }
 
   function payload() {
@@ -88,7 +107,15 @@ BarWidget {
     if (on) root.pluginShell.summon(root.moduleName, root.payload())
     else if (typeof root.pluginShell.hide === "function") root.pluginShell.hide(root.moduleName)
     root.tintOn = on
-    root.persistSettings()
+    if (on) {
+      root.restElapsedSec = 0
+      root.restLastActiveWall = 0
+      root.persistEyeClock()
+    }
+    // Left-clicking the bar button happens with no popup open, so that write
+    // is safe and immediate. The popup's own switch must wait for dismissal.
+    if (popup.open) root.markDirty()
+    else root.persistSettings()
   }
 
   // The slider re-fitting the live layer calls this while it is dragged.
@@ -97,6 +124,7 @@ BarWidget {
     if (root.tintOn && root.pluginShell
         && typeof root.pluginShell.summon === "function")
       root.pluginShell.summon(root.moduleName, root.payload())
+    if (popup.open) root.markDirty()
   }
 
   function setColor(id) {
@@ -104,22 +132,49 @@ BarWidget {
     if (root.tintOn && root.pluginShell
         && typeof root.pluginShell.summon === "function")
       root.pluginShell.summon(root.moduleName, root.payload())
-    root.persistSettings()
+    root.markDirty()
   }
 
   function setUseNightKey(on) {
     root.useNightKey = on === true
-    root.persistSettings()
+    root.markDirty()
   }
 
   function setRemindRest(on) {
     root.remindRest = on === true
+    root.markDirty()
+  }
+
+  // Nothing inside the popup may write the bar config.
+  //
+  // A shell.json write makes the host reload its layout, and under Shibumi that
+  // reload rebuilds the widget hosting this popup. The PopupCard holds a
+  // Hyprland focus grab; when its host is destroyed the grab is cleared, which
+  // fires PopupCard's onCleared and slams the popup shut on the very click the
+  // user just made -- so picking a colour or releasing the strength slider
+  // closed the menu before the strength could ever be adjusted.
+  //
+  // So colour, strength, and the switches apply live (the overlay repaints from
+  // memory) and are written once, when the popup is dismissed. The settings
+  // survive a restart exactly as before; they just stop costing a bar rebuild
+  // per interaction.
+  property bool _pendingPersist: false
+
+  function markDirty() {
+    root._pendingPersist = true
+  }
+
+  function flushPersist() {
+    if (!root._pendingPersist) return
+    root._pendingPersist = false
     root.persistSettings()
   }
 
   // Persist settings into the bar entry so they survive a shell restart.
   // updateEntryInline REPLACES the entry rather than merging, so every key has
-  // to travel together -- sending just one would drop the rest.
+  // to travel together -- sending just one would drop the rest. The eye-rest
+  // clock is deliberately absent: it lives in the state file, not the bar
+  // config, so no bar reload is ever triggered by a checkpoint.
   function persistSettings() {
     if (!root.pluginShell || typeof root.pluginShell.updateEntryInline !== "function") return
     root.pluginShell.updateEntryInline(root.moduleName, {
@@ -131,6 +186,13 @@ BarWidget {
       tintOn: root.tintOn
     })
   }
+
+  // User-facing setters may persist the whole entry: they always carry freshly
+  // chosen values, so a full write there is intent, not drift.
+
+  // The boot path persists nothing but tintOn (see persistTintOnly), so colour,
+  // strength, and reminder settings can only ever be written by explicit user
+  // action, never by a stale reload snapshot.
 
   // The stock bar text color, which the toggle/knob and bar glyphs actually
   // render with. Kept explicit because Color.muted/Color.popups.text evaluate
@@ -163,19 +225,135 @@ BarWidget {
     interval: 1000
     repeat: true
     running: true
-    onTriggered: root.refreshState()
+    onTriggered: root.updateRestClock()
   }
 
-  // Eye-rest reminder: runs only while the tint is on and the session is
-  // actually in use, and restarts whenever the tint is toggled, so it counts
-  // real desk time rather than wall-clock time -- an idle, locked, or
-  // screen-sleeping machine does not age the "eyes have been working" clock.
-  Timer {
-    id: restTimer
-    interval: root.remindMinutes * 60000
-    repeat: true
-    running: root.tintOn && root.remindRest && !root.sessionIdle
-    onTriggered: notifyRest.running = true
+  // Eye-rest reminder: a cumulative seconds counter rather than a one-shot
+  // wall-clock Timer, because a paused QML Timer restarts its whole interval on
+  // resume -- every quiet gap would silently reset "45 minutes" to zero. Each
+  // qualifying tick adds one second of desk time; idle stretches merely freeze
+  // it, so the reminder fires once a genuine 45 active minutes have banked up.
+  // A long real-world break -- ten or more minutes wall-clock away, including
+  // any suspension -- erases the banked time, so yesterday's minutes can never
+  // fire a toast the moment you sit back down this morning.
+  property int restElapsedSec: Math.max(0, Math.round(Number(setting("restSec", 0)) || 0))
+  // Date.now() of the most recent qualifying active tick. A long wall-clock
+  // gap between qualifying ticks is a genuine break and wipes the bank.
+  // Tick-counting alone cannot see a suspension: the 1-second ticker does not
+  // run while the machine sleeps, so last night's idle never accumulated and
+  // the banked minutes would otherwise survive into the new day untouched.
+  // Declared double on purpose: Date.now() is ~1.79e12 ms, which a plain
+  // int wraps to a huge negative and would make every tick look like a break.
+  property double restLastActiveWall: Number(setting("restWall", 0)) || 0
+  readonly property int restIdleResetSec: 10 * 60
+
+  // The clock lives in its own state file, never in shell.json. Writing the
+  // bar's config file makes the host shell reload its layout, and a bar that
+  // cannot patch the change in place rebuilds every widget it hosts -- which
+  // visibly restarts the whole center pill. Paying that cost every 45 seconds
+  // to checkpoint a countdown was the single worst trade in this widget, so
+  // the countdown now goes to plain state the bar never reads.
+  readonly property string stateDir:
+    (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state")
+    + "/omarchy/omatint"
+  readonly property string statePath: stateDir + "/eye-rest.json"
+
+  function updateRestClock() {
+    root.refreshState()
+    if (!root.tintOn || !root.remindRest) return
+    if (root.restLastActiveWall !== 0
+        && Date.now() - root.restLastActiveWall >= root.restIdleResetSec * 1000) {
+      root.restElapsedSec = 0
+      root.persistEyeClock()
+    }
+    if (root.sessionIdle) return
+    root.restLastActiveWall = Date.now()
+    if (++root.restElapsedSec % 45 === 0) root.persistEyeClock()
+    if (root.restElapsedSec < root.remindMinutes * 60) return
+    root.restElapsedSec = 0
+    root.persistEyeClock()
+    notifyRest.running = true
+  }
+
+  // Persist the eye-rest clock so a shell crash, keepLoaded reload, or restart
+  // does not lose progress: a restart resumes the count where it was instead of
+  // zeroing it. Written to a private state file every 45 ticks, and only there:
+  // touching shell.json instead would make the host reload the bar layout on
+  // every checkpoint. Written through a temp file and renamed, so a restart
+  // landing mid-write can never leave a half-parsed clock behind.
+  Process {
+    id: eyeClockWriter
+    running: false
+  }
+
+  // Both values are forced to non-negative integers before they reach the
+  // command line, so the printf operand is always bare JSON numbers.
+  function persistEyeClock() {
+    var sec = Math.max(0, Math.round(Number(root.restElapsedSec) || 0))
+    var wall = Math.max(0, Math.round(Number(root.restLastActiveWall) || 0))
+    eyeClockWriter.command = ["sh", "-c",
+      "mkdir -p '" + root.stateDir + "'"
+      + " && printf '{\"restSec\":" + sec + ",\"restWall\":" + wall + "}\\n'"
+      + " > '" + root.statePath + ".tmp'"
+      + " && mv '" + root.statePath + ".tmp' '" + root.statePath + "'"]
+    eyeClockWriter.running = true
+  }
+
+  // One-shot read at boot. A missing or unreadable file simply leaves the
+  // values the widget already carries, which is exactly the first-run case.
+  Process {
+    id: eyeClockReader
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.adoptEyeClock(text)
+    }
+  }
+
+  function loadEyeClock() {
+    eyeClockReader.command = ["cat", root.statePath]
+    eyeClockReader.running = true
+  }
+
+  function adoptEyeClock(raw) {
+    var text = String(raw === undefined || raw === null ? "" : raw).trim()
+    if (text === "") return
+    var parsed = null
+    try { parsed = JSON.parse(text) } catch (e) { return }
+    if (!parsed) return
+    var wall = Number(parsed.restWall)
+    // Newest write wins. The read is asynchronous, so on the one boot that
+    // still carries legacy keys a stale file could otherwise land after the
+    // migration has already banked fresher values and undo them.
+    if (!isFinite(wall) || wall <= 0) return
+    if (root.restLastActiveWall > 0 && wall < root.restLastActiveWall) return
+    var sec = Math.round(Number(parsed.restSec))
+    if (isFinite(sec) && sec >= 0) root.restElapsedSec = sec
+    root.restLastActiveWall = wall
+  }
+
+  // Older builds banked the clock in the bar entry. Seed the state file from
+  // those keys so no progress is lost, then drop them: leaving them in place
+  // would resurrect a stale count if the state file were ever removed. This is
+  // the last shell.json write this widget makes, and the keys are gone on the
+  // next boot, so it cannot come back.
+  function migrateLegacyEyeClock() {
+    var legacySec = root.setting("restSec", null)
+    var legacyWall = root.setting("restWall", null)
+    if (legacySec === null && legacyWall === null) return
+    root.persistEyeClock()
+    if (!root.pluginShell || typeof root.pluginShell.mutateShellConfig !== "function") return
+    root.pluginShell.mutateShellConfig(function (cfg) {
+      var layout = cfg && cfg.bar && cfg.bar.layout ? cfg.bar.layout : null
+      var sections = ["left", "center", "right"]
+      for (var s = 0; layout && s < sections.length; s++) {
+        var arr = layout[sections[s]] || []
+        for (var i = 0; arr && i < arr.length; i++) {
+          if (!arr[i] || arr[i].id !== root.moduleName) continue
+          delete arr[i].restSec
+          delete arr[i].restWall
+        }
+      }
+    })
   }
 
   Process {
@@ -202,7 +380,16 @@ BarWidget {
   function restoreIfWasOn() {
     if (setting("tintOn", false) !== true) return
     if (!root.pluginShell || typeof root.pluginShell.summon !== "function") return
-    root.pluginShell.summon(root.moduleName, root.payload())
+    // Build the payload from the persisted entry directly. The colorId and
+    // intensity bindings may lag one binding pass behind settings injection,
+    // so summoning root.payload() here could paint the overlay with the model
+    // defaults until the next re-summon. Reading the entry guarantees the
+    // restored layer matches exactly what was left on.
+    var restored = {
+      intensity: Model.clampIntensity(Number(setting("intensity", Model.DEFAULT_INTENSITY))),
+      color: Model.normalizeColor(String(setting("color", Model.DEFAULT_COLOR)))
+    }
+    root.pluginShell.summon(root.moduleName, JSON.stringify(restored))
   }
 
   function maybeBoot() {
@@ -217,6 +404,8 @@ BarWidget {
 
   function onWidgetReady() {
     root.refreshState()
+    root.loadEyeClock()
+    root.migrateLegacyEyeClock()
     root.restoreIfWasOn()
     Qt.callLater(function () { root._bootSettled = true })
   }
@@ -256,6 +445,17 @@ WidgetButton {
       } else {
         root.setEnabled(!root.tintOn)
       }
+    }
+  }
+
+  // Flush the deferred write when the popup is dismissed. Connections rather
+  // than a plain onOpenChanged handler: PopupCard already implements onOpenChanged
+  // to manage the bar's popout ownership, and redeclaring it here would replace
+  // that handler instead of adding to it.
+  Connections {
+    target: popup
+    function onOpenChanged() {
+      if (!popup.open) root.flushPersist()
     }
   }
 
@@ -418,7 +618,7 @@ WidgetButton {
           step: 5
           integer: true
           onMoved: function (value) { root.setIntensity(value) }
-          onReleased: function (value) { root.setIntensity(value); root.persistSettings() }
+          onReleased: function (value) { root.setIntensity(value) }
         }
 
         Text {
