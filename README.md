@@ -27,7 +27,7 @@ A chalkboard-user glyph () appears in the bar, painted in the colour you pick
   - **Colour swatches** — Green, Amber, Yellow or Red (see below).
   - **Strength slider** — 5–100%, re-paints the screen live; the value is remembered.
   - **Use the night-light key** — route `Super + Ctrl + N` to this tint instead of the stock night light.
-  - **Remind me to rest** — a notification every 45 minutes of active tint time; the clock pauses when you step away (idle over two minutes), lock, or the screen sleeps, so an unlocked-away stretch does not count as desk time.
+  - **Remind me to rest** — a notification every 45 minutes of active tint time; the clock pauses when you step away (idle over two minutes), lock, or the screen sleeps, so an unlocked-away stretch does not count as desk time. A real-world break of ten or more minutes away — vitally, a *suspension* — erases the banked time, so returning to the desk never fires a toast "owed" from earlier. The running count is kept in a small private state file, so a shell crash or `omarchy restart shell` resumes it instead of starting over.
 - **`Super + Ctrl + N`** — toggles the tint (when the night-light-key switch is on), otherwise the
   normal Omarchy night light.
 
